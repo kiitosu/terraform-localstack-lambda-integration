@@ -1,0 +1,45 @@
+services:
+  localstack:
+    image: localstack/localstack:3.8.1
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    ports:
+      - "4566:4566"
+    environment:
+      # 必要なサービスを追加する。terraformでdeployすると
+      # lambdaのdeployでlogsを求められた
+      # localstackのコンテナのログを見ると足りないサービスに関するエラーが出ている
+      SERVICES: lambda,logs
+      AWS_DEFAULT_REGION: ap-northeast-1
+
+  lambda-builder:
+    build:
+      context: ./lambda_builder
+      dockerfile: Dockerfile
+    volumes:
+      - ./src:/mnt/src
+      - ./terraform/build:/workspace/build
+    working_dir: /workspace
+    entrypoint: ["sh", "-c", "make -f /tmp/Makefile build-all", "tail", "-f", "/dev/null"]
+
+
+  terraform-setup:
+    build:
+      context: ./terraform
+      dockerfile: Dockerfile
+    volumes:
+      - ./terraform:/workspace
+    working_dir: /workspace
+    entrypoint:
+      - sh
+      - -c
+      - |
+        terraform init && \
+        terraform apply -auto-approve -var="aws_endpoint_url=$${AWS_ENDPOINT_URL}"
+    depends_on:
+      localstack:
+        condition: service_healthy
+      lambda-builder:
+        condition: service_completed_successfully
+    environment:
+      AWS_ENDPOINT_URL: http://localstack:4566
